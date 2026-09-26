@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#fff8f5"><title>Névkalap</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif;background:#fff8f5;color:#2d2524}
+.app{max-width:520px;margin:auto;min-height:100vh;padding:22px 18px 28px}.logo{font-size:14px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#a36d61}
+h1{font-size:38px;line-height:1.02;margin:8px 0 10px}.sub{color:#786d69;line-height:1.45}
+.panel{background:#fff;border:1px solid #eaded9;border-radius:24px;padding:20px;box-shadow:0 10px 30px #6f4b3b14;margin-top:18px}
+input,button{font:inherit}input{width:100%;padding:15px;border:1px solid #dccdc7;border-radius:15px;font-size:18px;text-align:center;letter-spacing:.12em;text-transform:uppercase}button{border:0;border-radius:15px;padding:14px 17px;font-weight:750;cursor:pointer}.primary{background:#2d2524;color:white;width:100%;margin-top:10px}.ghost{background:#f4ece8;color:#493e3a}.row{display:flex;gap:10px}.row>*{flex:1}.hidden{display:none}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.count{font-size:13px;color:#8b7d77}.card{height:55vh;min-height:400px;max-height:620px;background:linear-gradient(145deg,#fff,#f4e9e5);border-radius:30px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;box-shadow:0 18px 50px #6f4b3b20}.card:before{content:"";position:absolute;width:280px;height:280px;border-radius:50%;background:#ead0c6;filter:blur(2px);opacity:.55;top:-110px;right:-100px}.name{font-size:56px;font-weight:800;z-index:1;text-align:center;padding:20px}.hint{text-align:center;color:#8b7d77;font-size:13px;margin:12px 0}.actions{display:flex;justify-content:center;gap:22px;margin-top:12px}.act{width:66px;height:66px;border-radius:50%;font-size:27px;padding:0;background:#fff;border:1px solid #eaded9;box-shadow:0 8px 20px #6f4b3b14}.results h2{font-size:28px}.result{padding:15px 0;border-bottom:1px solid #eee1dc;font-size:21px;font-weight:700}.small{font-size:13px;color:#857771}.ok{background:#edf7ef;color:#296039;padding:12px;border-radius:14px;margin-top:12px}.err{background:#fff0ef;color:#8b3028;padding:12px;border-radius:14px;margin-top:12px}
+</style>
+</head>
+<body><main class="app">
+<div class="logo">NÉVKALAP</div>
+<section id="home" class="panel">
+<h1>Találjuk meg együtt.</h1><p class="sub">Tinder-szerű névválasztó leendő szülőknek. Te és a párod külön telefonról szavazhattok.</p>
+<div class="row" style="margin-top:18px"><button class="primary" id="create">Új közös szoba</button></div>
+<div style="text-align:center;margin:18px 0 10px;color:#9a8c86">vagy</div>
+<input id="roomInput" maxlength="5" placeholder="SZOBakód">
+<button class="ghost" id="join" style="width:100%;margin-top:10px">Csatlakozás</button>
+<div id="homeMsg"></div>
+</section>
+
+<section id="room" class="hidden">
+<div class="top"><button class="ghost" id="leave">← Kilépés</button><span class="count" id="roomLabel"></span></div>
+<div id="waiting" class="panel"><h2>Szobád elkészült.</h2><p class="sub">Add meg ezt a kódot a párodnak:</p><div style="font-size:38px;font-weight:850;letter-spacing:.2em;text-align:center;margin:18px 0" id="code"></div><button class="primary" id="copy">Kód másolása</button><div id="status" class="small" style="text-align:center;margin-top:14px">Várakozás a másik telefonra…</div></div>
+
+<div id="game" class="hidden">
+<div class="top"><span class="count" id="progress"></span><button class="ghost" id="finish">Eredmény</button></div>
+<div class="card" id="card"><div class="name" id="name">Betöltés…</div></div>
+<div class="hint">← nem tetszik &nbsp; • &nbsp; tetszik →</div>
+<div class="actions"><button class="act" id="no">✕</button><button class="act" id="yes">♥</button></div>
+</div>
+
+<div id="results" class="panel results hidden"><h2>❤️ Közös nevek</h2><p class="sub" id="resultIntro"></p><div id="list"></div><button class="ghost" id="again" style="width:100%;margin-top:18px">Új kör</button></div>
+</section>
+</main>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+const NAMES_URL="https://r.jina.ai/https://file.nytud.hu/osszesnoi.txt";
+let names=[], votes={}, index=0, room="", peer=null, conn=null, isHost=false, partner=false, ready=false;
+let salt="", commitments={}, partnerCommitments={}, finished=false, partnerFinished=false, partnerReveal=null;
+
+const $=id=>document.getElementById(id);
+function show(id){["home","room"].forEach(x=>$(x).classList.add("hidden"));$(id).classList.remove("hidden")}
+function msg(t,kind=""){ $("homeMsg").innerHTML=t?`<div class="${kind||"small"}">${t}</div>`:""}
+function code5(){return Math.random().toString(36).slice(2,7).toUpperCase()}
+function save(){localStorage.setItem("nk:"+room,JSON.stringify({votes,index,commitments,salt}))}
+async function sha(s){const b=new TextEncoder().encode(s);const h=await crypto.subtle.digest("SHA-256",b);return [...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,"0")).join("")}
+async function commitFor(name){return sha(salt+"|"+name)}
+function load(){try{let x=JSON.parse(localStorage.getItem("nk:"+room)||"{}");votes=x.votes||{};index=x.index||0;commitments=x.commitments||{};salt=x.salt||""}catch{} if(!salt){salt=crypto.getRandomValues(new Uint8Array(16)).reduce((s,b)=>s+b.toString(16).padStart(2,"0"),"");save()}}
+async function loadNames(){
+ try{
+  const r=await fetch(NAMES_URL); if(!r.ok) throw Error();
+  const t=await r.text(); names=t.split(/\\r?\\n/).map(x=>x.trim()).filter((x,i)=>i>0&&x&&!x.includes("jegyzéke"));
+  if(names.length<1000) throw Error();
+ }catch(e){
+  names=["Abigél","Adél","Alexandra","Alíz","Amália","Anna","Auróra","Boglárka","Borbála","Boróka","Csenge","Dóra","Dorottya","Emese","Emma","Eszter","Fanni","Flóra","Fruzsina","Hanna","Hanga","Helena","Jázmin","Janka","Júlia","Kata","Léna","Lili","Lilla","Luca","Mira","Nóra","Olívia","Panna","Petra","Réka","Sára","Sofia","Szonja","Vera","Virág","Zorka"];
+  $("status").innerHTML="A teljes hivatalos lista betöltése nem sikerült; próba neveket használunk.";
+ }
+}
+function render(){ if(index>=names.length){showResults();return} $("name").textContent=names[index];$("progress").textContent=`${index+1} / ${names.length}`}
+async function vote(v){
+ if(index>=names.length)return; const n=names[index]; votes[n]=v; index++;
+ if(v) commitments[n]=await commitFor(n); else delete commitments[n];
+ save(); send({type:"commit",commitments,index}); render();
+}
+function send(x){try{conn&&conn.open&&conn.send(x)}catch{}}
+function setupHost(){
+ peer=new Peer("nevkalap-"+room,{debug:0});
+ peer.on("open",()=>{$("status").textContent="Várakozás a párodra…"});
+ peer.on("connection",c=>{conn=c;partner=true;wire();});
+ peer.on("error",e=>{$("status").textContent="Kapcsolódási hiba. Próbáld újra."});
+}
+function setupGuest(){
+ peer=new Peer(undefined,{debug:0});
+ peer.on("open",()=>{conn=peer.connect("nevkalap-"+room,{reliable:true});wire()});
+ peer.on("error",e=>{$("homeMsg").innerHTML='<div class="err">Nem sikerült csatlakozni ehhez a szobához.</div>'});
+}
+function sendState(){send({type:"sync",index,commitments,finished})}
+function wire(){
+ conn.on("open",()=>{partner=true;ready=true;$("waiting").classList.add("hidden");$("game").classList.remove("hidden");sendState();render()});
+ conn.on("data",d=>{
+  if(d.type==="sync"||d.type==="commit"){partner=true;ready=true;partnerCommitments=d.commitments||{};$("waiting").classList.add("hidden");$("game").classList.remove("hidden");render()}
+  if(d.type==="finish"){partnerFinished=true;if(finished) reveal()}
+  if(d.type==="reveal"){partnerFinished=true;partnerReveal=d;maybeResults()}
+ });
+}
+async function finish(){
+ if(finished)return; finished=true; send({type:"finish"});
+ if(partnerFinished) await reveal();
+ $("game").classList.add("hidden");$("results").classList.remove("hidden");
+ $("resultIntro").textContent="Várjuk a párod befejezését…";
+ $("list").innerHTML='<div class="small">Amint mindketten végeztetek, megjelennek a közös nevek.</div>';
+}
+async function reveal(){
+ const liked=Object.keys(votes).filter(n=>votes[n]===true);
+ send({type:"reveal",liked,salt});
+ await maybeResults();
+}
+async function maybeResults(){
+ if(!(finished&&partnerFinished&&partnerReveal&&partnerReveal.liked))return;
+ const mine=Object.keys(votes).filter(n=>votes[n]===true);
+ const theirs=new Set(partnerReveal.liked);
+ const common=mine.filter(n=>theirs.has(n));
+ $("game").classList.add("hidden");$("waiting").classList.add("hidden");$("results").classList.remove("hidden");
+ $("resultIntro").textContent=common.length?`Mindketten igent mondtatok ${common.length} névre.`:"Még nincs közös név.";
+ $("list").innerHTML=common.length?common.map(n=>`<div class="result">${n}</div>`).join(""):'<div class="small">Nincs közös találat ebben a körben.</div>';
+}
+$("create").onclick=async()=>{room=code5();isHost=true;load();show("room");$("code").textContent=room;$("roomLabel").textContent="SZÓBA: "+room;await loadNames();setupHost();};
+$("join").onclick=async()=>{room=$("roomInput").value.trim().toUpperCase();if(room.length!==5){msg("Írj be egy 5 karakteres kódot.","err");return}isHost=false;load();show("room");$("code").textContent=room;$("roomLabel").textContent="SZÓBA: "+room;await loadNames();setupGuest();};
+$("copy").onclick=async()=>{try{await navigator.clipboard.writeText(room);$("status").textContent="A kód kimásolva. Küldd el a párodnak."}catch{$("status").textContent="A kód: "+room}};
+$("yes").onclick=()=>vote(true);$("no").onclick=()=>vote(false);
+$("finish").onclick=finish;
+$("again").onclick=()=>{votes={};index=0;commitments={};partnerCommitments={};finished=false;partnerFinished=false;partnerReveal=null;salt=crypto.getRandomValues(new Uint8Array(16)).reduce((s,b)=>s+b.toString(16).padStart(2,"0"),"");save();$("results").classList.add("hidden");$("game").classList.remove("hidden");render();sendState()};
+$("leave").onclick=()=>location.reload();
+document.addEventListener("keydown",e=>{if(e.key==="ArrowRight")vote(true);if(e.key==="ArrowLeft")vote(false)});
+</script>
+</body></html>
